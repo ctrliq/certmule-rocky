@@ -12,16 +12,19 @@
 %global __debug_package 1
 %global _binaries_in_noarch_packages_terminate_build 0
 
-Name:                 certmule-unsigned-%{efiarch}
+Name:                 certmule-rocky
 Version:              0.1
-Release:              2%{?dist}
-Summary:              UEFI cert loading EFI
+Release:              3%{?dist}
+Summary:              UEFI cert-loading EFI file for trusting Rocky Linux components
 ExclusiveArch:        x86_64
 License:              BSD
 URL:                  https://github.com/rhboot/certmule
-Source0:              https://github.com/rhboot/certmule/releases/download/%{version}/certmule-%{version}.tar.bz2
+#Source0:              https://github.com/rhboot/certmule/releases/download/%{version}/certmule-%{version}.tar.bz2
+Source0:              certmule-20230310.git.tar.gz
 Source1:              db.rocky.esl
 Source2:              sbat.rocky.csv
+
+Source1000:           ciq_sb_certmule.crt
 
 BuildRequires:        gcc make
 BuildRequires:        elfutils-libelf-devel
@@ -37,8 +40,10 @@ BuildRequires:       gcc-toolset-11-binutils
 
 Provides:             bundled(openssl) = %{openssl_vre}
 
-%global desc \
-UEFI cert loading EFI
+
+%define pesign_name_0 ciq_sb_certmule
+%define pesign_cert_0 %{SOURCE1000}
+
 
 %global debug_desc \
 This package provides debug information for package %{expand:%%{name}} \
@@ -46,7 +51,8 @@ Debug information is useful when developing applications that \
 use this package or when debugging this package.
 
 %description
-%desc
+CA bundled in a simple UEFI binary, designed for loading by shim. This will make a secure boot enabled system trust this bundled CA in addition to the one in shim.
+This package is specific to the Rocky Linux CA, it produces a certmule .efi file that contains the Rocky secure boot CA, for trusting Rocky secure boot components.
 
 %package debuginfo
 Summary:              Debug information for %{name}
@@ -67,7 +73,7 @@ BuildArch:            noarch
 %debug_desc
 
 %prep
-%setup -q
+%setup -q -n certmule-20230310.git 
 mkdir build-%{efiarch}
 cp %{SOURCE1} data/
 cp %{SOURCE2} data/
@@ -93,17 +99,51 @@ cd ..
 MAKEFLAGS="TOPDIR=.. -f ../Makefile "
 MAKEFLAGS+="EFIDIR=%{efidir} PKGNAME=certmule RELEASE=%{release}"
 
+mv build-%{efiarch}/certmule.efi build-%{efiarch}/certmule-unsigned.efi
+
+# If we have a "for real" signing macro installed, let's go ahead and sign the artifcact
+# Otherwise, the unsigned artifact and signed should be equivalent:
+%if %{?pe_signing_cert:1}%{!?pe_signing_cert:0}
+%pesign -s -i build-%{efiarch}/certmule-unsigned.efi -o build-%{efiarch}/certmule.efi  -c %{pesign_cert_0} -n %{pesign_name_0}
+%else
+cp -p build-%{efiarch}/certmule-unsigned.efi  build-%{efiarch}/certmule.efi
+%endif
+
 cd build-%{efiarch}
 make ${MAKEFLAGS} \
 	DESTDIR=${RPM_BUILD_ROOT} \
 	install
 cd ..
 
+cp -p build-%{efiarch}/certmule-unsigned.efi ${RPM_BUILD_ROOT}/%{certmuleinstalldir}/
+
+
+
+# Installing to 
+install -D -d -m 0755 ${RPM_BUILD_ROOT}/boot/
+install -D -d -m 0700 ${RPM_BUILD_ROOT}%{efi_esp_root}/
+install -D -d -m 0700 ${RPM_BUILD_ROOT}%{efi_esp_efi}/
+install -D -d -m 0700 ${RPM_BUILD_ROOT}%{efi_esp_dir}/
+
+# Install official "shim_certificate.efi" binary - the one shim actually looks for:
+install -p -m 0700 build-%{efiarch}/certmule.efi  ${RPM_BUILD_ROOT}%{efi_esp_dir}/shim_certificate.efi
+
+
+
+
 %files
 %dir %{certmuleinstalldir}
 %{certmuleinstalldir}/*.efi
+%{efi_esp_dir}/shim_certificate.efi
+
+
+
 
 %changelog
+* Mon Mar 27 2023 Skip Grube <sgrube@ciq.co> - 0.1-3
+- Naming adjustment, minor specfile adjustments
+- Added the ability to sign binary automatically
+
 * Tue Mar 21 2023 Skip Grube <sgrube@ciq.co> - 0.1-2
 - Fixed build for RHEL/Rocky 8
 - Fixed SBAT entry - need 6 columns
